@@ -1,6 +1,9 @@
 # CUDA_Kernel_Samples
+
 ## 引言
+
 本项目是 CUDA **算子手撕与面试指南**：
+
 1. 汇总了面试高频的 CUDA 算子题目和优化策略，包含面试高频算子的编写示例
 2. 项目从算子 naive 实现到优化版本均包含完整代码，便于调试与性能分析
 3. 每个算子附有相关的 GPU 知识点，帮助求职者高效备战 CUDA 编程面试
@@ -16,11 +19,12 @@
 |    sgemm    |  矩阵乘优化   | naive, blocktile, threadtile, ... |  中   |
 |  transpose  |  矩阵转置优化  |    naive, 优化访存并解决bank conflict    |  中   |
 
-
 ## 算子手撕说明
+
 面试时不会提供 CUDA 运行环境，也不会要求完整写出可以运行的代码，通常只需要写出 CUDA 算子函数（大部分情况只需要写这个），block_size，grid_size 和函数调用。
 
 在此列出一些宏，后面会用到：
+
 ```cpp
 // 1. 向上取整
 #define CEIL(a, b) ((a + b - 1) / (b))
@@ -36,11 +40,13 @@
 **本文剩余篇幅从这一角度出发，展示必要的代码，以供参考和练习。**
 
 # elementwise
+
 **考察频率**：<span style="color: blue; font-weight: bold;">低</span>
 
 **算子描述**：elementwise 是最简单的**一类算子**，其指的是对数据进行逐元素操作，例如将两个等长的数组对应元素相加（[add](./elementwise/add.cu)）。另外在深度学习中，激活函数会对输入数据的每个元素求对应激活值，故激活函数也算在 elementwise 范围内。
 
 算子主要分两种写法：
+
 1. naive：每个线程负责一个元素的运算
 2. 使用**float4**等向量化访存方式：只对大规模数据有加速效果，需要注意，**要在 grid 上除以 4**，而不是在 block 上除以 4，否则可能会降低SM的占用率(Occupancy，实际运行的线程数 / SM 理论最大线程数)，可以参考👉[grid_size 和 block_size 选择](https://blog.csdn.net/LostUnravel/article/details/135721041)（block_size 不小于SM上最大支持的线程数/最大同时执行的block数量，且得是SM上最大支持的线程数的约数，才有可能达到100% Occupancy），向量化存取的好处在于可以减少访存指令的数量，单位时间内读取的数据量变多，增大访存带宽。
 
@@ -51,6 +57,7 @@
 源码：[./elementwise/add.cu](./elementwise/add.cu)
 
 ### naive版
+
 ```cpp
 // block_size，grid_size 和函数调用
 int block_size = 1024;
@@ -67,6 +74,7 @@ __global__ void elementwise_add(float* a, float* b, float *c, int N) {
 ```
 
 ### 使用向量化访存
+
 使用向量化访存进行优化，需要注意，**要在 grid 上除以 4**：
 
 ```cpp
@@ -143,6 +151,7 @@ __global__ void relu_float4(float* x, float* y, int N) {
 ```
 
 # reduce
+
 **考察频率**：<span style="color: red; font-weight: bold;">高</span>
 
 **算子描述**：reduce 是一种聚合操作，通常用于将一个多元素的数据结构（如数组或张量）通过某种规则归约为一个更小的数据结构（通常是单个值或更小的数组）。它广泛应用于数据处理、并行计算以及深度学习中。例如对数组进行求和 (sum)，求均值 (mean)，求最大值 (max)，还有求 softmax。其中，**sum 和 softmax 的考察频率最高**。
@@ -331,6 +340,7 @@ void softmax(float* input, float* output, int N) {
 这种写法的优点是比较简单，虽然代码比较多，但基本都是采用归约的写法，几个算子的逻辑上差异不大。缺点是算子效率比较低。**这里建议学习 [softmax_matrix](#softmax_matrix) 的写法！**
 
 思路：
+
 - 核函数1：归约求最值 max_val
 - 核函数2：归约求和 sum
 - 核函数3：计算每个元素减去 max_val 除以 sum。
@@ -700,6 +710,7 @@ __global__ void sgemv(float* A, float* x, float* y, int M, int K) {
 源码：[./reduce/softmax_matrix/softmax_matrix.cu](./reduce/softmax_matrix/softmax_matrix.cu)
 
 对一个 MxN 的矩阵，每一行求 softmax，思路同样是每个 warp 处理一行，用这个 warp 对一行进行求和、求最值，计算结果存入共享内存，然后每个元素求 softmax：
+
 ```cpp
 __global__ void softmax_kernel(float* input, float* output, int M, int N) {
     __shared__ float s_max_val;
@@ -742,6 +753,7 @@ __global__ void softmax_kernel(float* input, float* output, int M, int N) {
 ```
 
 改用 `__shfl_xor_sync` 后，每个线程的寄存器的 `max_val` 和 `sum` 都是最终的结果，就不用写到共享内存再读取了：
+
 ```cpp
 dim3 block(32);
 dim3 grid(M);
