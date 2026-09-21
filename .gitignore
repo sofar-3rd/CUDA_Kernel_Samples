@@ -1,5 +1,8 @@
 # ide
 .*/
 
+# document
+GIT_PUSH_GUIDE.md
+
 # cmake
 *build*/
