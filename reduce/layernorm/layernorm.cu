@@ -14,6 +14,49 @@
         }                                                                       \
     } while (0)
 
+__device__ __forceinline__ float calculate_mean(
+    const float* row_input,
+    std::size_t N,
+    float* warp_sums,
+    float* shared_mean) {
+
+    const std::size_t stride = blockDim.x;
+    const int tid = threadIdx.x;
+    const int lane_id = tid % warpSize;
+    const int warp_id = tid / warpSize;
+    const int warp_num = blockDim.x / warpSize;
+
+    float local_sum = 0.0f;
+
+    // 每个线程计算当前行中自己负责元素的局部和.
+    for (std::size_t col = tid; col < N; col += stride) {
+        local_sum += row_input[col];
+    }
+
+    // 在每个 warp 内归约局部和, 并将结果汇总到 lane 0.
+    #pragma unroll
+    for (int offset = warpSize / 2; offset > 0; offset >>= 1) {
+        local_sum += __shfl_down_sync(0xffffffff, local_sum, offset);
+    }
+
+    if (lane_id == 0) {
+        warp_sums[warp_id] = local_sum;
+    }
+    __syncthreads();
+
+    // 由线程 0 汇总当前 block 内所有 warp 的结果.
+    if (tid == 0) {
+        float sum = 0.0f;
+        for (int warp = 0; warp < warp_num; ++warp) {
+            sum += warp_sums[warp];
+        }
+        *shared_mean = sum / static_cast<float>(N);
+    }
+    __syncthreads();
+
+    return *shared_mean;
+}
+
 __global__ void layernorm_kernel(
     const float* __restrict__ input,
     const float* __restrict__ gamma,
@@ -28,40 +71,19 @@ __global__ void layernorm_kernel(
         return;
     }
 
-    const std::size_t stride = blockDim.x;
-    const int tid = threadIdx.x;
-    const int lane_id = tid % warpSize;
-    const int warp_id = tid / warpSize;
-    const int warp_num = blockDim.x / warpSize;
-
     // 一个 block 最多支持 32 个 warp.
     __shared__ float warp_sums[32];
+    __shared__ float shared_mean;
 
-    float value = 0.0f;
+    const float mean = calculate_mean(
+        input + row * N,
+        N,
+        warp_sums,
+        &shared_mean);
 
-    // 每个线程计算当前行中自己负责元素的局部和.
-    for (std::size_t col = tid; col < N; col += stride) {
-        value += input[row * N + col];
-    }
-
-    // 在每个 warp 内归约局部和, 并将结果汇总到 lane 0.
-    #pragma unroll
-    for (int offset = warpSize / 2; offset > 0; offset >>= 1) {
-        value += __shfl_down_sync(0xffffffff, value, offset);
-    }
-
-    if (lane_id == 0) {
-        warp_sums[warp_id] = value;
-    }
-    __syncthreads();
-
-    // 由线程 0 汇总当前 block 内所有 warp 的结果.
-    if (tid == 0) {
-        float sum = 0.0f;
-        for (int warp = 0; warp < warp_num; ++warp) {
-            sum += warp_sums[warp];
-        }
-        output[row] = sum / static_cast<float>(N);
+    // 当前阶段将每行均值写出, 用于验证均值计算.
+    if (threadIdx.x == 0) {
+        output[row] = mean;
     }
 }
 
