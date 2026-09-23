@@ -1,18 +1,10 @@
 #include <cuda_runtime.h>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <random>
-
-#define CUDA_CHECK(call)                                                        \
-    do {                                                                        \
-        const cudaError_t error = (call);                                       \
-        if (error != cudaSuccess) {                                             \
-            std::fprintf(stderr, "CUDA error at %s:%d: %s\n",                \
-                         __FILE__, __LINE__, cudaGetErrorString(error));         \
-            std::exit(EXIT_FAILURE);                                            \
-        }                                                                       \
-    } while (0)
+#include "include/utils.cuh"
 
 __device__ __forceinline__ float sq(float x) { return x * x; }
 
@@ -22,7 +14,7 @@ __device__ __forceinline__ void calculate_mean(
     float* warp_sums,
     float* shared_mean) {
 
-    const std::size_t stride = blockDim.x;
+    const int stride = blockDim.x;
     const int tid = threadIdx.x;
     const int lane_id = tid % warpSize;
     const int warp_id = tid / warpSize;
@@ -64,8 +56,8 @@ __device__ __forceinline__ void calculate_variance(
     float* shared_mean,
     float* shared_variance) {
 
-    const std::size_t stride = blockDim.x;
     const int tid = threadIdx.x;
+    const int stride = blockDim.x;
     const int lane_id = tid % warpSize;
     const int warp_id = tid / warpSize;
     const int warp_num = blockDim.x / warpSize;
@@ -111,6 +103,9 @@ __global__ void layernorm_kernel(
     float epsilon) {
 
     const std::size_t row = blockIdx.x;
+    const int stride = blockDim.x;
+    const std::size_t row_offset = row * N;
+
     if (row >= M) {
         return;
     }
@@ -122,22 +117,26 @@ __global__ void layernorm_kernel(
 
     // 计算均值
     calculate_mean(
-        input + row * N,
+        input + row_offset,
         N,
         warp_sums,
         &shared_mean);
 
     // 计算方差
     calculate_variance(
-        input + row * N,
+        input + row_offset,
         N,
         warp_sums,
         &shared_mean,
         &shared_variance);
 
-    // 当前阶段将每行方差广播到整行, 用于验证最终输出布局.
-    for (std::size_t col = threadIdx.x; col < N; col += blockDim.x) {
-        output[row * N + col] = shared_variance;
+    const float inverse_std = rsqrtf(shared_variance + epsilon);
+
+    // 对行归一化
+    for (std::size_t col = threadIdx.x; col < N; col += stride) {
+        const std::size_t index = row_offset + col;
+        const float normalized = (input[index] - shared_mean) * inverse_std;
+        output[index] = normalized * gamma[col] + beta[col];
     }
 }
 
@@ -149,11 +148,14 @@ void initialize_data(float* data, std::size_t n) {
     }
 }
 
-void compute_variance_output_cpu(
+void compute_layernorm_output_cpu(
     const float* input,
+    const float* gamma,
+    const float* beta,
     float* output,
     std::size_t M,
-    std::size_t N) {
+    std::size_t N,
+    float epsilon) {
 
     for (std::size_t row = 0; row < M; ++row) {
         float sum = 0.0f;
@@ -170,7 +172,10 @@ void compute_variance_output_cpu(
         const float variance = squared_difference_sum / static_cast<float>(N);
 
         for (std::size_t col = 0; col < N; ++col) {
-            output[row * N + col] = variance;
+            const std::size_t index = row * N + col;
+            const float normalized = (input[index] - mean)
+                                   / std::sqrt(variance + epsilon);
+            output[index] = normalized * gamma[col] + beta[col];
         }
     }
 }
@@ -189,7 +194,7 @@ bool verify_output(
                               + relative_tolerance * std::fabs(expected[index]);
         if (difference > tolerance) {
             std::fprintf(stderr,
-                         "Variance mismatch at index %zu: GPU=%f, CPU=%f\n",
+                         "LayerNorm mismatch at index %zu: GPU=%f, CPU=%f\n",
                          index, actual[index], expected[index]);
             return false;
         }
@@ -201,47 +206,70 @@ int main() {
     constexpr std::size_t M = 1024;
     constexpr std::size_t N = 2048;
     constexpr int THREADS = 128;
+    constexpr float EPSILON = 1e-5f;
 
     const std::size_t element_count = M * N;
     const std::size_t tensor_bytes = sizeof(float) * element_count;
+    const std::size_t parameter_bytes = sizeof(float) * N;
 
     float* h_input = static_cast<float*>(std::malloc(tensor_bytes));
+    float* h_gamma = static_cast<float*>(std::malloc(parameter_bytes));
+    float* h_beta = static_cast<float*>(std::malloc(parameter_bytes));
     float* h_output = static_cast<float*>(std::malloc(tensor_bytes));
     float* h_output_reference = static_cast<float*>(std::malloc(tensor_bytes));
 
-    if (h_input == nullptr || h_output == nullptr || h_output_reference == nullptr) {
+    if (h_input == nullptr || h_gamma == nullptr || h_beta == nullptr
+        || h_output == nullptr || h_output_reference == nullptr) {
         std::fprintf(stderr, "Host memory allocation failed.\n");
         std::free(h_input);
+        std::free(h_gamma);
+        std::free(h_beta);
         std::free(h_output);
         std::free(h_output_reference);
         return EXIT_FAILURE;
     }
 
     initialize_data(h_input, element_count);
-    compute_variance_output_cpu(h_input, h_output_reference, M, N);
+    for (std::size_t col = 0; col < N; ++col) {
+        h_gamma[col] = 0.5f + static_cast<float>(col % 17) / 16.0f;
+        h_beta[col] = -0.25f + static_cast<float>(col % 13) / 24.0f;
+    }
+    compute_layernorm_output_cpu(
+        h_input,
+        h_gamma,
+        h_beta,
+        h_output_reference,
+        M,
+        N,
+        EPSILON);
 
     float* d_input = nullptr;
+    float* d_gamma = nullptr;
+    float* d_beta = nullptr;
     float* d_output = nullptr;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_input), tensor_bytes));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_output), tensor_bytes));
-    CUDA_CHECK(cudaMemcpy(d_input, h_input, tensor_bytes, cudaMemcpyHostToDevice));
+    cudaCheck(cudaMalloc(reinterpret_cast<void**>(&d_input), tensor_bytes));
+    cudaCheck(cudaMalloc(reinterpret_cast<void**>(&d_gamma), parameter_bytes));
+    cudaCheck(cudaMalloc(reinterpret_cast<void**>(&d_beta), parameter_bytes));
+    cudaCheck(cudaMalloc(reinterpret_cast<void**>(&d_output), tensor_bytes));
+    cudaCheck(cudaMemcpy(d_input, h_input, tensor_bytes, cudaMemcpyHostToDevice));
+    cudaCheck(cudaMemcpy(d_gamma, h_gamma, parameter_bytes, cudaMemcpyHostToDevice));
+    cudaCheck(cudaMemcpy(d_beta, h_beta, parameter_bytes, cudaMemcpyHostToDevice));
 
     const dim3 block(THREADS);
     const dim3 grid(M);
 
-    // gamma, beta 和 epsilon 会在后续完整 LayerNorm 实现中使用.
     layernorm_kernel<<<grid, block>>>(
         d_input,
-        nullptr,
-        nullptr,
+        d_gamma,
+        d_beta,
         d_output,
         M,
         N,
-        1e-5f);
-    CUDA_CHECK(cudaGetLastError());
-    CUDA_CHECK(cudaDeviceSynchronize());
+        EPSILON);
+    cudaCheck(cudaGetLastError());
+    cudaCheck(cudaDeviceSynchronize());
 
-    CUDA_CHECK(cudaMemcpy(
+    cudaCheck(cudaMemcpy(
         h_output,
         d_output,
         tensor_bytes,
@@ -252,12 +280,59 @@ int main() {
         h_output_reference,
         element_count);
     std::printf(
-        "LayerNorm variance verification: %s\n",
+        "LayerNorm verification: %s\n",
         passed ? "PASS" : "FAIL");
 
-    CUDA_CHECK(cudaFree(d_input));
-    CUDA_CHECK(cudaFree(d_output));
+    if (passed) {
+        constexpr int CPU_REPEAT = 10;
+        constexpr int GPU_REPEAT = 1000;
+
+        volatile float cpu_checksum = 0.0f;
+        const auto cpu_start = std::chrono::steady_clock::now();
+        for (int repeat = 0; repeat < CPU_REPEAT; ++repeat) {
+            compute_layernorm_output_cpu(
+                h_input,
+                h_gamma,
+                h_beta,
+                h_output_reference,
+                M,
+                N,
+                EPSILON);
+            cpu_checksum += h_output_reference[repeat % element_count];
+        }
+        const auto cpu_stop = std::chrono::steady_clock::now();
+        const double cpu_average_ms =
+            std::chrono::duration<double, std::milli>(cpu_stop - cpu_start).count()
+            / CPU_REPEAT;
+
+        const float gpu_total_ms = TIME_RECORD(
+            GPU_REPEAT,
+            ([&] {
+                layernorm_kernel<<<grid, block>>>(
+                    d_input,
+                    d_gamma,
+                    d_beta,
+                    d_output,
+                    M,
+                    N,
+                    EPSILON);
+            }));
+        cudaCheck(cudaGetLastError());
+        const float gpu_average_ms = gpu_total_ms / GPU_REPEAT;
+
+        std::printf("CPU average time: %.6f ms\n", cpu_average_ms);
+        std::printf("CUDA average time: %.6f ms\n", gpu_average_ms);
+        std::printf("Speedup: %.2fx\n", cpu_average_ms / gpu_average_ms);
+        (void)cpu_checksum;
+    }
+
+    cudaCheck(cudaFree(d_input));
+    cudaCheck(cudaFree(d_gamma));
+    cudaCheck(cudaFree(d_beta));
+    cudaCheck(cudaFree(d_output));
     std::free(h_input);
+    std::free(h_gamma);
+    std::free(h_beta);
     std::free(h_output);
     std::free(h_output_reference);
 
