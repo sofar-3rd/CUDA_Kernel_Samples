@@ -4,8 +4,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <random>
 #include <string_view>
 #include <vector>
@@ -198,91 +200,116 @@ int run_correctness_suite(
     return passed ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
+struct BenchmarkShape {
+    std::size_t M;
+    std::size_t N;
+};
+
+inline bool parse_positive_size(const char* text, std::size_t& value) {
+    if (text == nullptr || text[0] == '\0' || text[0] == '-') {
+        return false;
+    }
+    errno = 0;
+    char* end = nullptr;
+    const unsigned long long parsed = std::strtoull(text, &end, 10);
+    if (errno == ERANGE || *end != '\0' || parsed == 0
+        || parsed > std::numeric_limits<std::size_t>::max()) {
+        return false;
+    }
+    value = static_cast<std::size_t>(parsed);
+    return true;
+}
+
 template <typename ChooseConfig, typename Launch>
 int run_benchmark(
     const char* implementation_name,
+    const BenchmarkShape* shapes,
+    std::size_t shape_count,
     ChooseConfig choose_config,
     Launch launch) {
-    constexpr std::size_t M = 1024;
-    constexpr std::size_t N = 2048;
     constexpr int warmup_iterations = 100;
     constexpr int timed_iterations = 1000;
-    const std::size_t tensor_bytes = M * N * sizeof(float);
-    const std::size_t parameter_bytes = N * sizeof(float);
-    std::vector<float> input(M * N);
-    std::vector<float> gamma(N);
-    std::vector<float> beta(N);
-    initialize_input(input);
-    initialize_affine(gamma, beta);
 
-    float* device_input = nullptr;
-    float* device_gamma = nullptr;
-    float* device_beta = nullptr;
-    float* device_output = nullptr;
-    if (!check_cuda(cudaMalloc(&device_input, tensor_bytes), "cudaMalloc input")
-        || !check_cuda(cudaMalloc(&device_gamma, parameter_bytes), "cudaMalloc gamma")
-        || !check_cuda(cudaMalloc(&device_beta, parameter_bytes), "cudaMalloc beta")
-        || !check_cuda(cudaMalloc(&device_output, tensor_bytes), "cudaMalloc output")
-        || !check_cuda(cudaMemcpy(device_input, input.data(), tensor_bytes,
-                                  cudaMemcpyHostToDevice), "copy input")
-        || !check_cuda(cudaMemcpy(device_gamma, gamma.data(), parameter_bytes,
-                                  cudaMemcpyHostToDevice), "copy gamma")
-        || !check_cuda(cudaMemcpy(device_beta, beta.data(), parameter_bytes,
-                                  cudaMemcpyHostToDevice), "copy beta")) {
-        return EXIT_FAILURE;
-    }
+    for (std::size_t shape_index = 0; shape_index < shape_count; ++shape_index) {
+        const std::size_t M = shapes[shape_index].M;
+        const std::size_t N = shapes[shape_index].N;
+        const std::size_t tensor_bytes = M * N * sizeof(float);
+        const std::size_t parameter_bytes = N * sizeof(float);
+        std::vector<float> input(M * N);
+        std::vector<float> gamma(N);
+        std::vector<float> beta(N);
+        initialize_input(input);
+        initialize_affine(gamma, beta);
 
-    for (int iteration = 0; iteration < warmup_iterations; ++iteration) {
-        if (!check_cuda(
-                launch(device_input, device_gamma, device_beta, device_output,
-                       M, N, kEpsilon, nullptr), "warmup launch")) {
+        float* device_input = nullptr;
+        float* device_gamma = nullptr;
+        float* device_beta = nullptr;
+        float* device_output = nullptr;
+        if (!check_cuda(cudaMalloc(&device_input, tensor_bytes), "cudaMalloc input")
+            || !check_cuda(cudaMalloc(&device_gamma, parameter_bytes), "cudaMalloc gamma")
+            || !check_cuda(cudaMalloc(&device_beta, parameter_bytes), "cudaMalloc beta")
+            || !check_cuda(cudaMalloc(&device_output, tensor_bytes), "cudaMalloc output")
+            || !check_cuda(cudaMemcpy(device_input, input.data(), tensor_bytes,
+                                      cudaMemcpyHostToDevice), "copy input")
+            || !check_cuda(cudaMemcpy(device_gamma, gamma.data(), parameter_bytes,
+                                      cudaMemcpyHostToDevice), "copy gamma")
+            || !check_cuda(cudaMemcpy(device_beta, beta.data(), parameter_bytes,
+                                      cudaMemcpyHostToDevice), "copy beta")) {
             return EXIT_FAILURE;
         }
-    }
-    if (!check_cuda(cudaStreamSynchronize(nullptr), "warmup execution")) {
-        return EXIT_FAILURE;
-    }
 
-    cudaEvent_t start = nullptr;
-    cudaEvent_t stop = nullptr;
-    check_cuda(cudaEventCreate(&start), "create start event");
-    check_cuda(cudaEventCreate(&stop), "create stop event");
-    check_cuda(cudaEventRecord(start), "record start event");
-    for (int iteration = 0; iteration < timed_iterations; ++iteration) {
-        if (!check_cuda(
-                launch(device_input, device_gamma, device_beta, device_output,
-                       M, N, kEpsilon, nullptr), "timed launch")) {
+        for (int iteration = 0; iteration < warmup_iterations; ++iteration) {
+            if (!check_cuda(
+                    launch(device_input, device_gamma, device_beta, device_output,
+                           M, N, kEpsilon, nullptr), "warmup launch")) {
+                return EXIT_FAILURE;
+            }
+        }
+        if (!check_cuda(cudaStreamSynchronize(nullptr), "warmup execution")) {
             return EXIT_FAILURE;
         }
+
+        cudaEvent_t start = nullptr;
+        cudaEvent_t stop = nullptr;
+        check_cuda(cudaEventCreate(&start), "create start event");
+        check_cuda(cudaEventCreate(&stop), "create stop event");
+        check_cuda(cudaEventRecord(start), "record start event");
+        for (int iteration = 0; iteration < timed_iterations; ++iteration) {
+            if (!check_cuda(
+                    launch(device_input, device_gamma, device_beta, device_output,
+                           M, N, kEpsilon, nullptr), "timed launch")) {
+                return EXIT_FAILURE;
+            }
+        }
+        check_cuda(cudaEventRecord(stop), "record stop event");
+        check_cuda(cudaEventSynchronize(stop), "wait for stop event");
+
+        float total_milliseconds = 0.0f;
+        check_cuda(cudaEventElapsedTime(&total_milliseconds, start, stop),
+                   "measure elapsed time");
+        const double average_microseconds =
+            total_milliseconds * 1000.0 / timed_iterations;
+        const double algorithm_bytes = static_cast<double>(8 * M * N + 8 * N);
+        const double effective_gigabytes_per_second =
+            algorithm_bytes / (average_microseconds * 1e3);
+        const auto config = choose_config(M, N);
+        std::printf(
+            "[BENCH] %s M=%zu N=%zu vec=%d block=%d time=%.3f us effective=%.2f GB/s\n",
+            implementation_name,
+            M,
+            N,
+            config.vector_size,
+            config.block_size,
+            average_microseconds,
+            effective_gigabytes_per_second);
+
+        cudaEventDestroy(start);
+        cudaEventDestroy(stop);
+        cudaFree(device_input);
+        cudaFree(device_gamma);
+        cudaFree(device_beta);
+        cudaFree(device_output);
     }
-    check_cuda(cudaEventRecord(stop), "record stop event");
-    check_cuda(cudaEventSynchronize(stop), "wait for stop event");
-
-    float total_milliseconds = 0.0f;
-    check_cuda(cudaEventElapsedTime(&total_milliseconds, start, stop),
-               "measure elapsed time");
-    const double average_microseconds =
-        total_milliseconds * 1000.0 / timed_iterations;
-    const double algorithm_bytes = static_cast<double>(8 * M * N + 8 * N);
-    const double effective_gigabytes_per_second =
-        algorithm_bytes / (average_microseconds * 1e3);
-    const auto config = choose_config(M, N);
-    std::printf(
-        "[BENCH] %s M=%zu N=%zu vec=%d block=%d time=%.3f us effective=%.2f GB/s\n",
-        implementation_name,
-        M,
-        N,
-        config.vector_size,
-        config.block_size,
-        average_microseconds,
-        effective_gigabytes_per_second);
-
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
-    cudaFree(device_input);
-    cudaFree(device_gamma);
-    cudaFree(device_beta);
-    cudaFree(device_output);
     return EXIT_SUCCESS;
 }
 
@@ -299,10 +326,36 @@ int run_main(
         return run_correctness_suite(
             test_cases, test_case_count, choose_config, launch);
     }
-    if (argc == 2 && std::string_view(argv[1]) == "--benchmark") {
-        return run_benchmark(implementation_name, choose_config, launch);
+    if (argc >= 2 && std::string_view(argv[1]) == "--benchmark") {
+        if (argc == 2) {
+            constexpr BenchmarkShape shapes[] = {
+                {1024, 2048},  // main shape, vec4 path
+                {4096, 2048},  // large M, vec4 path
+                {256, 8192},   // large N, vec4 path
+                {4096, 1025},  // odd N, vec1 path
+                {4096, 1026},  // N % 2 == 0, vec2 path
+                {64,   4096},  // small M, vec4 path
+                {8,    1024},  // tiny M, low occupancy
+            };
+            return run_benchmark(
+                implementation_name,
+                shapes,
+                sizeof(shapes) / sizeof(shapes[0]),
+                choose_config,
+                launch);
+        }
+        if (argc == 4) {
+            BenchmarkShape shape{};
+            if (!parse_positive_size(argv[2], shape.M)
+                || !parse_positive_size(argv[3], shape.N)) {
+                std::fprintf(stderr, "M and N must be positive integers.\n");
+                return EXIT_FAILURE;
+            }
+            return run_benchmark(
+                implementation_name, &shape, 1, choose_config, launch);
+        }
     }
-    std::fprintf(stderr, "Usage: %s [--benchmark]\n", argv[0]);
+    std::fprintf(stderr, "Usage: %s [--benchmark [M N]]\n", argv[0]);
     return EXIT_FAILURE;
 }
 

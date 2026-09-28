@@ -1,9 +1,10 @@
 # LayerNorm CUDA
 
-这个目录包含两个 FP32 LayerNorm 前向实现：
+这个目录包含三个 FP32 LayerNorm 前向实现：
 
 - `layernorm_v1`：固定 128 threads、标量访存的基线实现。
-- `layernorm_v2`：练习实现，目标是动态选择 block size，并支持 `vec_size=1/2/4` 的访存路径。
+- `layernorm_v2`：动态 block size 与 `vec_size=1/2/4` 访存练习。
+- `layernorm_cub`：保留 v2 结构、改用 CUB BlockReduce 的规约练习。
 
 ## 目录结构
 
@@ -14,15 +15,18 @@ layernorm/
 ├── include/
 │   ├── layernorm.cuh
 │   ├── layernorm_v2.cuh
+│   ├── layernorm_cub.cuh
 │   └── utils.cuh
 ├── src/
 │   ├── layernorm.cu
 │   ├── layernorm_v2.cu
+│   ├── layernorm_cub.cu
 │   └── utils.cu
 └── tests/
     ├── layernorm_test_support.cuh
     ├── layernorm_v1_test.cu
-    └── layernorm_v2_test.cu
+    ├── layernorm_v2_test.cu
+    └── layernorm_cub_test.cu
 ```
 
 ## 环境要求
@@ -112,7 +116,18 @@ benchmark 不注册为默认 CTest，避免机器负载导致测试不稳定。�
 ```bash
 ./layernorm_v1_test --benchmark
 ./layernorm_v2_test --benchmark
+./layernorm_cub_test --benchmark
 ```
+
+以上命令运行默认 shape sweep。也可以显式指定一个 shape，适合精确 benchmark 和 NCU 采集：
+
+```bash
+./layernorm_v1_test --benchmark 1024 2048
+./layernorm_v2_test --benchmark 1024 2048
+./layernorm_cub_test --benchmark 1024 2048
+```
+
+`M` 和 `N` 必须是正整数。
 
 输出示例：
 
@@ -168,6 +183,27 @@ cudaError_t launch(
 2. `load_vector<4>()` / `store_vector<4>()`：将标量循环替换为真正的 `float4` 宽访存。
 
 每完成一步都运行 `./layernorm_v2_test`，最后再运行 benchmark 和 ncu。
+
+## CUB BlockReduce 实现
+
+`src/layernorm_cub.cu` 保留 v2 的向量化和动态 launch 结构，使用 CUB `BlockReduce` 完成 block 级规约：
+
+```cpp
+block_reduce_sum(
+    float value,
+    CubBlockReduce::TempStorage& reduce_storage,
+    int valid_threads)
+```
+
+编译和运行：
+
+```bash
+make layernorm_cub_test -j
+./layernorm_cub_test
+./layernorm_cub_test --benchmark
+```
+
+正确性测试包含 `block=255` 和 `block=513`，用于覆盖 partial warp 和非二次幂 block。
 
 ## 使用 Nsight Compute
 

@@ -14,7 +14,10 @@ target_include_directories(layernorm_v1 PUBLIC ${PROJECT_SOURCE_DIR}/include)
 add_library(layernorm_v2 STATIC src/layernorm_v2.cu)
 target_include_directories(layernorm_v2 PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
-set_target_properties(layernorm_v1 layernorm_v2 PROPERTIES
+add_library(layernorm_cub STATIC src/layernorm_cub.cu)
+target_include_directories(layernorm_cub PUBLIC ${PROJECT_SOURCE_DIR}/include)
+
+set_target_properties(layernorm_v1 layernorm_v2 layernorm_cub PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
     CUDA_STANDARD 17
@@ -26,10 +29,15 @@ if(BUILD_TESTING)
     target_include_directories(layernorm_v1_test PRIVATE ${PROJECT_SOURCE_DIR})
     target_link_libraries(layernorm_v1_test PRIVATE layernorm_v1)
 
-    add_executable(layernorm_v2_test EXCLUDE_FROM_ALL tests/layernorm_v2_test.cu)
+    add_executable(layernorm_v2_test tests/layernorm_v2_test.cu)
     target_include_directories(layernorm_v2_test PRIVATE ${PROJECT_SOURCE_DIR})
     target_link_libraries(layernorm_v2_test PRIVATE layernorm_v2)
 
+    add_executable(layernorm_cub_test tests/layernorm_cub_test.cu)
+    target_include_directories(layernorm_cub_test PRIVATE ${PROJECT_SOURCE_DIR})
+    target_link_libraries(layernorm_cub_test PRIVATE layernorm_cub)
+
     add_test(NAME layernorm_v1_correctness COMMAND layernorm_v1_test)
     add_test(NAME layernorm_v2_correctness COMMAND layernorm_v2_test)
+    add_test(NAME layernorm_cub_correctness COMMAND layernorm_cub_test)
 endif()
