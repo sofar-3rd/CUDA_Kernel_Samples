@@ -26,18 +26,17 @@ __device__ __forceinline__ FloatPack<VectorSize> load_vector(
 }
 
 template <>
+__device__ __forceinline__ FloatPack<2> load_vector<2>(
+    const float* address) {
+    const float2 value = *reinterpret_cast<const float2*>(address);
+    return {{value.x, value.y}};
+}
+
+template <>
 __device__ __forceinline__ FloatPack<4> load_vector<4>(
     const float* address) {
-    FloatPack<4> result{};
-
-    // TODO(student): Replace these scalar loads with one aligned float4 load.
-    // The caller guarantees that N is divisible by 4. cudaMalloc provides an
-    // aligned base address, so every row start is also 16-byte aligned.
-    #pragma unroll
-    for (int index = 0; index < 4; ++index) {
-        result.values[index] = address[index];
-    }
-    return result;
+    const float4 value = *reinterpret_cast<const float4*>(address);
+    return {{value.x, value.y, value.z, value.w}};
 }
 
 template <int VectorSize>
@@ -51,14 +50,22 @@ __device__ __forceinline__ void store_vector(
 }
 
 template <>
+__device__ __forceinline__ void store_vector<2>(
+    float* address,
+    const FloatPack<2>& value) {
+    *reinterpret_cast<float2*>(address) = make_float2(
+        value.values[0], value.values[1]);
+}
+
+template <>
 __device__ __forceinline__ void store_vector<4>(
     float* address,
     const FloatPack<4>& value) {
-    // TODO(student): Replace these scalar stores with one aligned float4 store.
-    #pragma unroll
-    for (int index = 0; index < 4; ++index) {
-        address[index] = value.values[index];
-    }
+    *reinterpret_cast<float4*>(address) = make_float4(
+        value.values[0],
+        value.values[1],
+        value.values[2],
+        value.values[3]);
 }
 
 __device__ __forceinline__ float block_reduce_sum(
@@ -230,14 +237,24 @@ int choose_vector_size(std::size_t N) {
     return 1;
 }
 
+int largest_power_of_two_within(std::size_t value) {
+    int result = 1;
+    while (result * 2 <= static_cast<int>(value)) {
+        result <<= 1;
+    }
+    return result;
+}
+
 int choose_block_size(std::size_t M, std::size_t vector_count) {
     // TODO(student): Select a power-of-two block size in [32, max_block_size].
     // Use max_block_size = 1024 when M < 256, otherwise 256. The current test
     // contract expects the largest power of two not greater than vector_count,
     // capped by max_block_size.
-    (void)M;
-    (void)vector_count;
-    return 128;
+
+    const int max_block_size = (M < 256) ? 1024 : 256;
+    const int block_size = max(32, min(largest_power_of_two_within(vector_count),
+                                       max_block_size));
+    return block_size;
 }
 
 template <int VectorSize>
