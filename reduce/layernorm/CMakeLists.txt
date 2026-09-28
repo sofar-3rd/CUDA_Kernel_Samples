@@ -1,18 +1,35 @@
 cmake_minimum_required(VERSION 3.18)
 
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES 86 90)
+endif()
+
 project(LAYERNORM LANGUAGES CXX CUDA)
 
-add_executable(
-    layernorm
-    layernorm.cu
-    src/utils.cu
-)
+include(CTest)
 
-target_include_directories(layernorm PRIVATE ${PROJECT_SOURCE_DIR}/include)
+add_library(layernorm_v1 STATIC src/layernorm.cu)
+target_include_directories(layernorm_v1 PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
-set_target_properties(layernorm PROPERTIES
+add_library(layernorm_v2 STATIC src/layernorm_v2.cu)
+target_include_directories(layernorm_v2 PUBLIC ${PROJECT_SOURCE_DIR}/include)
+
+set_target_properties(layernorm_v1 layernorm_v2 PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
     CUDA_STANDARD 17
     CUDA_STANDARD_REQUIRED ON
 )
+
+if(BUILD_TESTING)
+    add_executable(layernorm_v1_test tests/layernorm_v1_test.cu)
+    target_include_directories(layernorm_v1_test PRIVATE ${PROJECT_SOURCE_DIR})
+    target_link_libraries(layernorm_v1_test PRIVATE layernorm_v1)
+
+    add_executable(layernorm_v2_test EXCLUDE_FROM_ALL tests/layernorm_v2_test.cu)
+    target_include_directories(layernorm_v2_test PRIVATE ${PROJECT_SOURCE_DIR})
+    target_link_libraries(layernorm_v2_test PRIVATE layernorm_v2)
+
+    add_test(NAME layernorm_v1_correctness COMMAND layernorm_v1_test)
+    add_test(NAME layernorm_v2_correctness COMMAND layernorm_v2_test)
+endif()
