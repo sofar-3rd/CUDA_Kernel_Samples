@@ -6,6 +6,8 @@ endif()
 
 project(LAYERNORM LANGUAGES CXX CUDA)
 
+add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
+
 include(CTest)
 
 add_library(layernorm_v1 STATIC src/layernorm.cu)

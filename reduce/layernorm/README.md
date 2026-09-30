@@ -218,6 +218,23 @@ sudo ncu \
   --export layernorm-v2 \
   --force-overwrite \
   ./build/layernorm_v2_test --benchmark
+
+sudo ncu \
+  --target-processes all \
+  --kernel-name 'regex:layernorm' \
+  --launch-skip 10 \
+  --launch-count 1 \
+  --set full \
+  --export layernorm-cub \
+  --force-overwrite \
+  ./build/layernorm_cub_test --benchmark 1024 2048
+
+
+ncu --import ./ncu_profile/layernorm-cub.ncu-repz --page raw > ./ncu_profile/layernorm-cub-raw.txt
+
+ncu --import ./ncu_profile/layernorm-cub.ncu-repz --page detail > ./ncu_profile/layernorm-cub-details.txt
+
+ncu --import ./ncu_profile/layernorm-cub.ncu-repz --page source > ./ncu_profile/layernorm-cub-source.txt
 ```
 
 重点比较 v1/v2 的：
