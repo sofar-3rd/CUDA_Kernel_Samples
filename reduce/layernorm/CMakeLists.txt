@@ -6,6 +6,11 @@ endif()
 
 project(LAYERNORM LANGUAGES CXX CUDA)
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+
 add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
 
 include(CTest)
@@ -21,13 +26,6 @@ target_include_directories(layernorm_cub PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
 add_library(layernorm_welford STATIC src/layernorm_welford.cu)
 target_include_directories(layernorm_welford PUBLIC ${PROJECT_SOURCE_DIR}/include)
-
-set_target_properties(layernorm_v1 layernorm_v2 layernorm_cub layernorm_welford PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED ON
-    CUDA_STANDARD 17
-    CUDA_STANDARD_REQUIRED ON
-)
 
 if(BUILD_TESTING)
     add_executable(layernorm_v1_test tests/layernorm_v1_test.cu)
