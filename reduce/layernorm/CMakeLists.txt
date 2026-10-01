@@ -24,6 +24,9 @@ target_include_directories(layernorm_v2 PUBLIC ${PROJECT_SOURCE_DIR}/include)
 add_library(layernorm_cub STATIC src/layernorm_cub.cu)
 target_include_directories(layernorm_cub PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
+add_library(layernorm_cub_v2 STATIC src/layernorm_cub_v2.cu)
+target_include_directories(layernorm_cub_v2 PUBLIC ${PROJECT_SOURCE_DIR}/include)
+
 add_library(layernorm_welford STATIC src/layernorm_welford.cu)
 target_include_directories(layernorm_welford PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
@@ -40,6 +43,10 @@ if(BUILD_TESTING)
     target_include_directories(layernorm_cub_test PRIVATE ${PROJECT_SOURCE_DIR})
     target_link_libraries(layernorm_cub_test PRIVATE layernorm_cub)
 
+    add_executable(layernorm_cub_v2_test tests/layernorm_cub_v2_test.cu)
+    target_include_directories(layernorm_cub_v2_test PRIVATE ${PROJECT_SOURCE_DIR})
+    target_link_libraries(layernorm_cub_v2_test PRIVATE layernorm_cub_v2)
+
     add_executable(layernorm_welford_test tests/layernorm_welford_test.cu)
     target_include_directories(layernorm_welford_test PRIVATE ${PROJECT_SOURCE_DIR})
     target_link_libraries(layernorm_welford_test PRIVATE layernorm_welford)
@@ -47,5 +54,6 @@ if(BUILD_TESTING)
     add_test(NAME layernorm_v1_correctness COMMAND layernorm_v1_test)
     add_test(NAME layernorm_v2_correctness COMMAND layernorm_v2_test)
     add_test(NAME layernorm_cub_correctness COMMAND layernorm_cub_test)
+    add_test(NAME layernorm_cub_v2_correctness COMMAND layernorm_cub_v2_test)
     add_test(NAME layernorm_welford_correctness COMMAND layernorm_welford_test)
 endif()

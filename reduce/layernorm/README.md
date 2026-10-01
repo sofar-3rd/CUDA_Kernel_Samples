@@ -227,8 +227,28 @@ sudo ncu \
   --set full \
   --export layernorm-cub \
   --force-overwrite \
-  ./build/layernorm_cub_test --benchmark 1024 2048
+  ./build/layernorm_cub_test --benchmark 4096 8192
 
+
+# 注意：不能在 --metrics 的单个参数值内部用 `\` 续行。
+# `\` 只吃掉换行符，下一行的缩进空格会留在值里，ncu 会把
+# "   dram__throughput..." 当成目标程序，报 "does not exist or is not an executable"。
+# 用 tr 去掉所有空白后再拼成一个逗号列表：
+METRICS="$(tr -d '[:space:]' <<'EOF'
+  gpu__time_duration.sum,
+  dram__throughput.avg.pct_of_peak_sustained_elapsed,
+  sm__throughput.avg.pct_of_peak_sustained_elapsed,
+  smsp__warps_eligible.avg.per_cycle_active,
+  sm__maximum_warps_avg_per_active_cycle,
+  sm__warps_active.avg.per_cycle_active
+EOF
+)"
+
+# 不同 option 之间用 `\` 续行是安全的（空格是 shell 正常分词）
+ncu --metrics "$METRICS" \
+  --launch-skip 10 \
+  --launch-count 1 \
+  ./build/layernorm_cub_test --benchmark 4096 8192
 
 ncu --import ./ncu_profile/layernorm-cub.ncu-repz --page raw > ./ncu_profile/layernorm-cub-raw.txt
 
