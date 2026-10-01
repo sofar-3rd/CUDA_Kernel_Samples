@@ -141,6 +141,11 @@ float call_kernel(int kernel_num, bool record, int M, int N, int K, float alpha,
         dim3 blockDim(256);
         dim3 gridDim(CEIL_DIV(N, 128), CEIL_DIV(M, 128));
         total_time = TIME_RECORD(repeat_times, ([&]{sgemm_v7<128, 128, 8, 8, 8><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);}));
+    }
+    else if (kernel_num == 8) {
+        dim3 blockDim(32, 32);
+        dim3 gridDim(CEIL_DIV(N, 32), CEIL_DIV(M, 32));
+        total_time = TIME_RECORD(repeat_times, ([&]{my_sgemm_v1<<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);}));
     } else {
         printf("Error: kernel %d not found.\n", kernel_num);
         exit(EXIT_FAILURE);
