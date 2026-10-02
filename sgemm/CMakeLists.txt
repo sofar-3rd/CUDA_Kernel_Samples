@@ -13,3 +13,8 @@ target_compile_options(main PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-static-global-te
 
 # link cublas library
 target_link_libraries(main ${CUDA_LIBRARIES} ${CUDA_cublas_LIBRARY})
+
+add_executable(my_kernel2_test test/my_kernel2_test.cu)
+set_target_properties(my_kernel2_test PROPERTIES CUDA_ARCHITECTURES 86)
+enable_testing()
+add_test(NAME my_kernel2 COMMAND my_kernel2_test)
