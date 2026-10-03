@@ -1,4 +1,5 @@
 #pragma once
+#include <stddef.h>
 #include <stdio.h>
 
 #define OFFSET(row, col, ld) ((row)*(ld)+(col))
@@ -12,7 +13,7 @@ B 的窗口不断向下滑
 所有部分乘积累加到 local_sum
 */
 
-// requirement: BM, BN, BK > 0; M % BM == 0, N % BN == 0, K % BK == 0
+// requirement: BM, BN, BK > 0; M, N > 0; K >= 0; tile edges are zero-padded
 // max(BM * BN, BM * BK, BK * BN) <= maxThreadsPerBlock
 // sizeof(float) * (BM * BK + BK * BN) <= sharedMemPerBlock
 
@@ -41,14 +42,22 @@ __global__ void my_sgemm_v2(int M, int N, int K, float alpha, float *A, float *B
 
     float local_sum = 0.f;
     for(int i=0; i<K; i+=BK){
-        if (a_idy < BM && a_idx < BK)
-            As[a_idy][a_idx] = A[a_idy * K + a_idx];
-        if (b_idy < BK && b_idx < BN)
-            Bs[b_idy][b_idx] = B[b_idy * N + b_idx];
+        if (a_idy < BM && a_idx < BK) {
+            if (by * BM + a_idy < M && a_idx < K - i)
+                As[a_idy][a_idx] = A[a_idy * K + a_idx];
+            else
+                As[a_idy][a_idx] = 0.f;
+        }
+        if (b_idy < BK && b_idx < BN) {
+            if (b_idy < K - i && bx * BN + b_idx < N)
+                Bs[b_idy][b_idx] = B[b_idy * N + b_idx];
+            else
+                Bs[b_idy][b_idx] = 0.f;
+        }
         __syncthreads();
 
-            A += BK;
-            B += BK * N;
+        A += BK;
+        B += BK * N;
 
         if(c_idy < BM && c_idx < BN){
             for(int j=0; j<BK; ++j)
@@ -56,7 +65,7 @@ __global__ void my_sgemm_v2(int M, int N, int K, float alpha, float *A, float *B
         }
         __syncthreads();
     }
-    if(c_idy < BM && c_idx < BN){
+    if(c_idy < BM && c_idx < BN && by * BM + c_idy < M && bx * BN + c_idx < N){
         int offset = c_idy * N + c_idx;
         C[offset] = alpha * local_sum + beta * C[offset];
     }
