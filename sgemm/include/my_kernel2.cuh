@@ -27,21 +27,24 @@ __global__ void my_sgemm_v2(int M, int N, int K, float alpha, float *A, float *B
     int bx = blockIdx.x; // block 列
     int by = blockIdx.y; // block 行
 
-    int tx = threadIdx.x % BN; // block 中 element 列
-    int ty = threadIdx.x / BN; // block 中 element 行
+    int tx = threadIdx.x % BN; // thread 在 block 中列
+    int ty = threadIdx.x / BN; // thread 在 block 中行
 
     __shared__ float As[BM][BK];
     __shared__ float Bs[BK][BN];
 
-    float* p_A_start = &A[by * BM * K];             // 矩阵 A_tile 起始点
-    float* p_B_start = &B[bx * BN];                 // 矩阵 B_tile 起始点
-    float* p_C_start = &C[by * BM * N + bx * BN];   // 矩阵 C_tile 起始点
+    A = &A[by * BM * K];             // 矩阵 A_tile 起始点
+    B = &B[bx * BN];                 // 矩阵 B_tile 起始点
+    C = &C[by * BM * N + bx * BN];   // 矩阵 C_tile 起始点
 
     float local_sum = 0.f;
     for(int i=0; i<K; i+=BK){
-        As[ty][tx] = p_A_start[ty * K + (tx + i)]; // 缓存 A_tile
-        Bs[ty][tx] = p_B_start[(ty + i) * N + tx]; // 缓存 B_tile
+        As[ty][tx] = A[ty * K + tx]; // 缓存 A_tile
+        Bs[ty][tx] = B[ty * N + tx]; // 缓存 B_tile
         __syncthreads();
+
+        A += BK;
+        B += BK * N;
 
         for(int j=0; j<BK; ++j){
             local_sum += As[ty][j] * Bs[j][tx];
@@ -49,5 +52,5 @@ __global__ void my_sgemm_v2(int M, int N, int K, float alpha, float *A, float *B
         __syncthreads();
     }
     int offset = ty * N + tx;
-    p_C_start[offset] = alpha * local_sum + beta * p_C_start[offset];
+    C[offset] = alpha * local_sum + beta * C[offset];
 }

@@ -5,7 +5,7 @@
 #include <vector>
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
-#include <my_kernel4.cuh>
+#include <my_kernel5.cuh>
 
 static void check_cuda(cudaError_t error, const char *file, int line) {
     if (error != cudaSuccess) {
@@ -53,7 +53,7 @@ static bool run_case(unsigned int m, unsigned int n, unsigned int k) {
     cudaCheck(cudaEventCreate(&start));
     cudaCheck(cudaEventCreate(&stop));
     cudaCheck(cudaEventRecord(start));
-    my_sgemm_v4<BM, BN, BK, TM, TN><<<dim3((n + BN - 1) / BN, (m + BM - 1) / BM), BM * BN / (TM * TN)>>>(
+    my_sgemm_v5<BM, BN, BK, TM, TN><<<dim3((n + BN - 1) / BN, (m + BM - 1) / BM), BM * BN / (TM * TN)>>>(
         m, n, k, alpha, d_a, d_b, beta, d_c);
     cudaCheck(cudaGetLastError());
     cudaCheck(cudaEventRecord(stop));

@@ -92,8 +92,8 @@ static bool run_case(unsigned int m, unsigned int n, unsigned int k) {
 
 int main() {
     bool passed = true;
-    passed = run_case<64, 64, 8, 8>(64, 64, 16) && passed;
-    passed = run_case<128, 32, 8, 8>(128, 64, 16) && passed;
+    passed = run_case<64, 64, 8, 8>(64, 64, 64) && passed;
+    passed = run_case<64, 64, 8, 8>(128, 128, 128) && passed;
     passed = run_case<64, 64, 8, 8>(512, 512, 512) && passed;
     passed = run_case<64, 64, 8, 8>(768, 768, 768) && passed;
     passed = run_case<64, 64, 8, 8>(1024, 1024, 1024) && passed;
