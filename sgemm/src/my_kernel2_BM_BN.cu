@@ -14,7 +14,7 @@ static void check_cublas(cublasStatus_t status) {
 
 int main() {
     constexpr unsigned int m = 512, n = 512, k = 512;
-    constexpr unsigned int BM = 32, BN = 32, BK = 32;
+    constexpr unsigned int BM = 32, BN = 32, BK = 16;
     constexpr float alpha = 1.25f, beta = 0.5f;
 
     float a[m * k] = {}, b[k * n] = {}, c[m * n] = {}, result[m * n] = {};
@@ -38,7 +38,7 @@ int main() {
     cudaCheck(cudaEventCreate(&stop));
     cudaCheck(cudaEventRecord(start));
     // 列在前，行在后，blocksize = thread
-    my_sgemm_v2<BM, BN, BK><<<dim3(n / BN, m / BM), BM * BN>>>(
+    my_sgemm_v2<BM, BN, BK><<<dim3(n / BN, m / BM), max(BM * BN, max(BM * BK, BN * BK))>>>(
         m, n, k, alpha, d_a, d_b, beta, d_c);
     cudaCheck(cudaGetLastError());
     cudaCheck(cudaEventRecord(stop));

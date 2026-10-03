@@ -12,6 +12,10 @@ B 的窗口不断向下滑
 所有部分乘积累加到 local_sum
 */
 
+// requirement: BM, BN, BK > 0; M % BM == 0, N % BN == 0, K % BK == 0
+// max(BM * BN, BM * BK, BK * BN) <= maxThreadsPerBlock
+// sizeof(float) * (BM * BK + BK * BN) <= sharedMemPerBlock
+
 template<unsigned int BM, 
          unsigned int BN,
          unsigned int BK>
@@ -19,33 +23,41 @@ __global__ void my_sgemm_v2(int M, int N, int K, float alpha, float *A, float *B
     int bx = blockIdx.x; // block 列
     int by = blockIdx.y; // block 行
 
-    int tx = threadIdx.x % BN; // matrix C block 中 element 列
-    int ty = threadIdx.x / BN; // matrix C block 中 element 行
+    int c_idx = threadIdx.x % BN; // matrix C block 中 element 列
+    int c_idy = threadIdx.x / BN; // matrix C block 中 element 行
+
+    int a_idx = threadIdx.x % BK;
+    int a_idy = threadIdx.x / BK;
+
+    int b_idx = threadIdx.x % BN;
+    int b_idy = threadIdx.x / BN;
 
     __shared__ float As[BM][BK];
     __shared__ float Bs[BK][BN];
 
-    float* p_A_start = &A[by * BM * K];             // 矩阵 A_tile 起始点
-    float* p_B_start = &B[bx * BN];                 // 矩阵 B_tile 起始点
-    float* p_C_start = &C[by * BM * N + bx * BN];   // 矩阵 C_tile 起始点
+    A = &A[by * BM * K];             // 矩阵 A_tile 起始点
+    B = &B[bx * BN];                 // 矩阵 B_tile 起始点
+    C = &C[by * BM * N + bx * BN];   // 矩阵 C_tile 起始点
 
     float local_sum = 0.f;
     for(int i=0; i<K; i+=BK){
-#pragma unroll
-        for (unsigned int index = threadIdx.x; index < BM * BK; index += blockDim.x) {
-            As[index / BK][index % BK] = p_A_start[(index / BK) * K + i + index % BK];
-        }
-#pragma unroll
-        for (unsigned int index = threadIdx.x; index < BK * BN; index += blockDim.x) {
-            Bs[index / BN][index % BN] = p_B_start[(i + index / BN) * N + index % BN];
-        }
+        if (a_idy < BM && a_idx < BK)
+            As[a_idy][a_idx] = A[a_idy * K + a_idx];
+        if (b_idy < BK && b_idx < BN)
+            Bs[b_idy][b_idx] = B[b_idy * N + b_idx];
         __syncthreads();
 
-        for(int j=0; j<BK; ++j){
-            local_sum += As[ty][j] * Bs[j][tx];
+            A += BK;
+            B += BK * N;
+
+        if(c_idy < BM && c_idx < BN){
+            for(int j=0; j<BK; ++j)
+                local_sum += As[c_idy][j] * Bs[j][c_idx];
         }
         __syncthreads();
     }
-    int offset = ty * N + tx;
-    p_C_start[offset] = alpha * local_sum + beta * p_C_start[offset];
+    if(c_idy < BM && c_idx < BN){
+        int offset = c_idy * N + c_idx;
+        C[offset] = alpha * local_sum + beta * C[offset];
+    }
 }
