@@ -1,10 +1,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <random>
 #include <vector>
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
-#include <my_kernel3.cuh>
+#include <my_kernel4.cuh>
 
 static void check_cuda(cudaError_t error, const char *file, int line) {
     if (error != cudaSuccess) {
@@ -21,13 +22,19 @@ static void check_cublas(cublasStatus_t status) {
     }
 }
 
-template <int BM, int BN, int BK, int TM>
+static void randomize_matrix(float *data, size_t count) {
+    static std::mt19937 generator(42);
+    std::uniform_real_distribution<float> distribution(-0.5f, 0.5f);
+    for (size_t i = 0; i < count; ++i) data[i] = distribution(generator);
+}
+
+template <int BM, int BN, int BK, int TM, int TN>
 static bool run_case(unsigned int m, unsigned int n, unsigned int k) {
     constexpr float alpha = 1.25f, beta = 0.5f;
     std::vector<float> a(m * k), b(k * n), c(m * n), result(m * n), expected(m * n);
-    for (size_t i = 0; i < a.size(); ++i) a[i] = (static_cast<int>((i * 17) % 101) - 50) * 0.01f;
-    for (size_t i = 0; i < b.size(); ++i) b[i] = (static_cast<int>((i * 29) % 103) - 51) * 0.01f;
-    for (size_t i = 0; i < c.size(); ++i) c[i] = (static_cast<int>((i * 11) % 107) - 53) * 0.01f;
+    randomize_matrix(a.data(), a.size());
+    randomize_matrix(b.data(), b.size());
+    randomize_matrix(c.data(), c.size());
 
     const size_t a_bytes = a.size() * sizeof(float);
     const size_t b_bytes = b.size() * sizeof(float);
@@ -46,7 +53,7 @@ static bool run_case(unsigned int m, unsigned int n, unsigned int k) {
     cudaCheck(cudaEventCreate(&start));
     cudaCheck(cudaEventCreate(&stop));
     cudaCheck(cudaEventRecord(start));
-    my_sgemm_v3<BM, BN, BK, TM><<<dim3((n + BN - 1) / BN, (m + BM - 1) / BM), BM * BN / TM>>>(
+    my_sgemm_v4<BM, BN, BK, TM, TN><<<dim3((n + BN - 1) / BN, (m + BM - 1) / BM), BM * BN / (TM * TN)>>>(
         m, n, k, alpha, d_a, d_b, beta, d_c);
     cudaCheck(cudaGetLastError());
     cudaCheck(cudaEventRecord(stop));
@@ -72,8 +79,8 @@ static bool run_case(unsigned int m, unsigned int n, unsigned int k) {
             const float actual = result[row * n + col];
             if (!std::isfinite(actual) || !std::isfinite(expected_value) ||
                 std::fabs(actual - expected_value) > 1e-4f + 1e-4f * std::fabs(expected_value)) {
-                if (passed) std::fprintf(stderr, "FAIL M=%u N=%u K=%u BM=%d BN=%d BK=%d TM=%d\n",
-                                         m, n, k, BM, BN, BK, TM);
+                if (passed) std::fprintf(stderr, "FAIL M=%u N=%u K=%u BM=%d BN=%d BK=%d TM=%d TN=%d\n",
+                                         m, n, k, BM, BN, BK, TM, TN);
                 if (passed) std::fprintf(stderr, "  (%u,%u): expected=%g actual=%g\n",
                                          row, col, expected_value, actual);
                 passed = false;
@@ -85,19 +92,19 @@ static bool run_case(unsigned int m, unsigned int n, unsigned int k) {
     cudaCheck(cudaFree(d_b));
     cudaCheck(cudaFree(d_c));
     cudaCheck(cudaFree(d_ref));
-    if (passed) std::printf("PASS M=%u N=%u K=%u BM=%d BN=%d BK=%d TM=%d (%.3f ms)\n",
-                          m, n, k, BM, BN, BK, TM, elapsed_ms);
+    if (passed) std::printf("PASS M=%u N=%u K=%u BM=%d BN=%d BK=%d TM=%d TN=%d(%.3f ms)\n",
+                          m, n, k, BM, BN, BK, TM, TN, elapsed_ms);
     return passed;
 }
 
 int main() {
     bool passed = true;
-    passed = run_case<64, 64, 8, 8>(64, 64, 16) && passed;
-    passed = run_case<128, 32, 8, 8>(128, 64, 16) && passed;
-    passed = run_case<64, 64, 8, 8>(512, 512, 512) && passed;
-    passed = run_case<64, 64, 8, 8>(768, 768, 768) && passed;
-    passed = run_case<64, 64, 8, 8>(1024, 1024, 1024) && passed;
-    passed = run_case<64, 64, 8, 8>(1280, 1280, 1280) && passed;
-    passed = run_case<64, 64, 8, 8>(2048, 2048, 2048) && passed;
+    passed = run_case<64, 64, 8, 8, 8>(64, 64, 16) && passed;
+    passed = run_case<128, 32, 8, 8, 8>(128, 64, 16) && passed;
+    passed = run_case<64, 64, 8, 8, 8>(512, 512, 512) && passed;
+    passed = run_case<64, 64, 8, 8, 8>(768, 768, 768) && passed;
+    passed = run_case<64, 64, 8, 8, 8>(1024, 1024, 1024) && passed;
+    passed = run_case<64, 64, 8, 8, 8>(1280, 1280, 1280) && passed;
+    passed = run_case<64, 64, 8, 8, 8>(2048, 2048, 2048) && passed;
     return passed ? EXIT_SUCCESS : EXIT_FAILURE;
 }

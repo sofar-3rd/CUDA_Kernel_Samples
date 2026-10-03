@@ -6,7 +6,7 @@ find_package(CUDA REQUIRED)
 include_directories(${CUDA_INCLUDE_DIRS})
 include_directories(${PROJECT_SOURCE_DIR}/include)
 aux_source_directory(${PROJECT_SOURCE_DIR}/src SRC)
-list(REMOVE_ITEM SRC "${PROJECT_SOURCE_DIR}/src/my_kernel2_BM_BN.cu" "${PROJECT_SOURCE_DIR}/src/my_kernel3.cu")
+list(REMOVE_ITEM SRC "${PROJECT_SOURCE_DIR}/src/my_kernel2.cu" "${PROJECT_SOURCE_DIR}/src/my_kernel2_BM_BN.cu" "${PROJECT_SOURCE_DIR}/src/my_kernel3.cu" "${PROJECT_SOURCE_DIR}/src/my_kernel4.cu")
 
 add_executable(main main.cu ${SRC})
 set_target_properties(main PROPERTIES CUDA_ARCHITECTURES 86)
@@ -15,8 +15,9 @@ target_compile_options(main PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-static-global-te
 # link cublas library
 target_link_libraries(main ${CUDA_LIBRARIES} ${CUDA_cublas_LIBRARY})
 
-add_executable(my_kernel2_test test/my_kernel2_test.cu)
+add_executable(my_kernel2_test src/my_kernel2.cu)
 set_target_properties(my_kernel2_test PROPERTIES CUDA_ARCHITECTURES 86)
+target_link_libraries(my_kernel2_test ${CUDA_cublas_LIBRARY})
 enable_testing()
 add_test(NAME my_kernel2 COMMAND my_kernel2_test)
 
@@ -28,3 +29,10 @@ add_test(NAME my_kernel2_BM_BN COMMAND my_kernel2_BM_BN_test)
 
 add_executable(my_kernel3_test src/my_kernel3.cu)
 set_target_properties(my_kernel3_test PROPERTIES CUDA_ARCHITECTURES 86)
+target_link_libraries(my_kernel3_test ${CUDA_cublas_LIBRARY})
+add_test(NAME my_kernel3 COMMAND my_kernel3_test)
+
+add_executable(my_kernel4_test src/my_kernel4.cu)
+set_target_properties(my_kernel4_test PROPERTIES CUDA_ARCHITECTURES 86)
+target_link_libraries(my_kernel4_test ${CUDA_cublas_LIBRARY})
+add_test(NAME my_kernel4 COMMAND my_kernel4_test)
