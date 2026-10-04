@@ -9,3 +9,8 @@
 #include "kernel7.cuh"
 #include "my_kernel1.cuh"
 #include "my_kernel2.cuh"
+#include "my_kernel3.cuh"
+#include "my_kernel4.cuh"
+#include "my_kernel5.cuh"
+#include "my_kernel6.cuh"
+#include "my_kernel7.cuh"

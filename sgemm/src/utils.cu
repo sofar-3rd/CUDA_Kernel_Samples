@@ -142,12 +142,12 @@ float call_kernel(int kernel_num, bool record, int M, int N, int K, float alpha,
         dim3 gridDim(CEIL_DIV(N, 128), CEIL_DIV(M, 128));
         total_time = TIME_RECORD(repeat_times, ([&]{sgemm_v7<128, 128, 8, 8, 8><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);}));
     }
-    else if (kernel_num == 8) {
+    else if (kernel_num == 11) {
         dim3 blockDim(32, 32);
         dim3 gridDim(CEIL_DIV(N, 32), CEIL_DIV(M, 32));
         total_time = TIME_RECORD(repeat_times, ([&]{my_sgemm_v1<<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);}));
     }
-    else if (kernel_num == 9) {
+    else if (kernel_num == 12) {
         if (!my_sgemm_v2_supported<32>(M, N, K)) {
             fprintf(stderr, "my_sgemm_v2 requires M=N=K>0 and a multiple of 32.\n");
             exit(EXIT_FAILURE);
@@ -155,6 +155,31 @@ float call_kernel(int kernel_num, bool record, int M, int N, int K, float alpha,
         dim3 blockDim(1024);
         dim3 gridDim(CEIL_DIV(N, 32), CEIL_DIV(M, 32));
         total_time = TIME_RECORD(repeat_times, ([&]{my_sgemm_v2<32><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);}));
+    }
+    else if (kernel_num == 13) {
+        dim3 blockDim(512);
+        dim3 gridDim(CEIL_DIV(N, 64), CEIL_DIV(M, 64));
+        total_time = TIME_RECORD(repeat_times, ([&]{my_sgemm_v3<64, 64, 8, 8><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);}));
+    }
+    else if (kernel_num == 14) {
+        dim3 blockDim(256);
+        dim3 gridDim(CEIL_DIV(N, 128), CEIL_DIV(M, 128));
+        total_time = TIME_RECORD(repeat_times, ([&]{my_sgemm_v4<128, 128, 8, 8, 8><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);}));
+    }
+    else if (kernel_num == 15) {
+        dim3 blockDim(256);
+        dim3 gridDim(CEIL_DIV(N, 128), CEIL_DIV(M, 128));
+        total_time = TIME_RECORD(repeat_times, ([&]{my_sgemm_v5<128, 128, 8, 8, 8><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);}));
+    }
+    else if (kernel_num == 16) {
+        dim3 blockDim(256);
+        dim3 gridDim(CEIL_DIV(N, 128), CEIL_DIV(M, 128));
+        total_time = TIME_RECORD(repeat_times, ([&]{my_sgemm_v6<128, 128, 8, 8, 8><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);}));
+    }
+    else if (kernel_num == 17) {
+        dim3 blockDim(256);
+        dim3 gridDim(CEIL_DIV(N, 128), CEIL_DIV(M, 128));
+        total_time = TIME_RECORD(repeat_times, ([&]{my_sgemm_v7<128, 128, 8, 8, 8><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);}));
     } else {
         printf("Error: kernel %d not found.\n", kernel_num);
         exit(EXIT_FAILURE);

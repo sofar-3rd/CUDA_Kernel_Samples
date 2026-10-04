@@ -10,8 +10,8 @@ int main(int argc, char **argv) {
     }
 
     int kernel_num = atoi(argv[1]);
-    if (kernel_num < 0 || kernel_num > 9) {
-        printf("Please enter a valid kernel number (0-9).\n");
+    if (kernel_num < 0 || (kernel_num > 7 && kernel_num < 11) || kernel_num > 17) {
+        printf("Please enter a valid kernel number (0-7 or 11-17).\n");
         exit(EXIT_FAILURE);
     } else {
         printf("Select kernel %d.\n", kernel_num);
