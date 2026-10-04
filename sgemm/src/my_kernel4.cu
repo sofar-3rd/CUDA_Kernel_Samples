@@ -99,12 +99,16 @@ static bool run_case(unsigned int m, unsigned int n, unsigned int k) {
 
 int main() {
     bool passed = true;
-    passed = run_case<64, 64, 8, 8, 8>(64, 64, 16) && passed;
-    passed = run_case<64, 64, 8, 8, 8>(128, 128, 16) && passed;
+    passed = run_case<64, 64, 8, 8, 8>(64, 64, 128) && passed;
+    passed = run_case<64, 64, 8, 8, 8>(128, 128, 128) && passed;
+    passed = run_case<64, 64, 8, 8, 8>(256, 256, 256) && passed;
     passed = run_case<128, 128, 8, 8, 8>(512, 512, 512) && passed;
     passed = run_case<128, 128, 8, 8, 8>(768, 768, 768) && passed;
     passed = run_case<128, 128, 8, 8, 8>(1024, 1024, 1024) && passed;
     passed = run_case<128, 128, 8, 8, 8>(1280, 1280, 1280) && passed;
     passed = run_case<128, 128, 8, 8, 8>(2048, 2048, 2048) && passed;
+    passed = run_case<128, 128, 8, 8, 8>(2304, 2304, 2304) && passed;
+    passed = run_case<128, 128, 8, 8, 8>(2560, 2560, 2560) && passed;
+    passed = run_case<128, 128, 8, 8, 8>(4096, 4096, 4096) && passed;
     return passed ? EXIT_SUCCESS : EXIT_FAILURE;
 }
