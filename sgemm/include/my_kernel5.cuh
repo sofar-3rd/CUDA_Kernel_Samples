@@ -77,7 +77,7 @@ __global__ void my_sgemm_v5(int M, int N, int K, float alpha, float *A, float *B
 
 #pragma unroll
             for (int resIdxN=0; resIdxN<TN; resIdxN+=4){
-                FLOAT4(B_reg[resIdxN]) = FLOAT4(Bs[dotIdx][thread_c_col * TM + resIdxN]);
+                FLOAT4(B_reg[resIdxN]) = FLOAT4(Bs[dotIdx][thread_c_col * TN + resIdxN]);
             }
 
 #pragma unroll
