@@ -13,11 +13,18 @@ list(REMOVE_ITEM SRC
     "${PROJECT_SOURCE_DIR}/src/my_kernel4.cu"
     "${PROJECT_SOURCE_DIR}/src/my_kernel5.cu"
     "${PROJECT_SOURCE_DIR}/src/my_kernel6.cu"
+    "${PROJECT_SOURCE_DIR}/src/my_kernel7.cu"
 )
 
 add_executable(main main.cu ${SRC})
 set_target_properties(main PROPERTIES CUDA_ARCHITECTURES 86)
 target_compile_options(main PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-static-global-template-stub=false>)
+
+# NOTE: -static-global-template-stub 是 CUDA 11.x 的 nvcc 选项，CUDA 12 已移除。
+# 保留会导致该选项被当作未知选项转发给 host compiler(gcc) 而报错。
+if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 12.0)
+    target_compile_options(main PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-static-global-template-stub=false>)
+endif()
 
 # link cublas library
 target_link_libraries(main ${CUDA_LIBRARIES} ${CUDA_cublas_LIBRARY})
@@ -53,3 +60,8 @@ add_executable(my_kernel6_test src/my_kernel6.cu)
 set_target_properties(my_kernel6_test PROPERTIES CUDA_ARCHITECTURES 86)
 target_link_libraries(my_kernel6_test ${CUDA_cublas_LIBRARY})
 add_test(NAME my_kernel6 COMMAND my_kernel6_test)
+
+add_executable(my_kernel7_test src/my_kernel7.cu)
+set_target_properties(my_kernel7_test PROPERTIES CUDA_ARCHITECTURES 86)
+target_link_libraries(my_kernel7_test ${CUDA_cublas_LIBRARY})
+add_test(NAME my_kernel7 COMMAND my_kernel7_test)

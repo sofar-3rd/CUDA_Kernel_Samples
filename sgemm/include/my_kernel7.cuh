@@ -1,6 +1,5 @@
 #pragma once
 #include <cuda_runtime.h>
-#include <cuda/pipeline>
 #define OFFSET(row, col, ld) ((row)*(ld)+(col))
 #define FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
 
@@ -19,7 +18,7 @@ template <const int BM,
           const int BK,
           const int TM,
           const int TN>
-__global__ void my_sgemm_v6(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C)
+__global__ void my_sgemm_v7(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C)
 {
     const int bx = blockIdx.x;
     const int by = blockIdx.y;
@@ -35,6 +34,10 @@ __global__ void my_sgemm_v6(int M, int N, int K, float alpha, float *A, float *B
     const int thread_b_row = threadIdx.x / (BN / 4);
     const int thread_b_stride = blockDim.x * 4 / BN;  // B tile 的行数为 BN, 所有线程一次能搬运 blockDim.x * 4, 记录一次搬运几行
 
+    constexpr int THREAD_NUM = BM * BN / (TM * TN);
+    constexpr int A_LOADS_PER_THREAD = BM * BK / (THREAD_NUM * 4); // 每个线程要搬运多少个 FLOAT 4
+    constexpr int B_LOADS_PER_THREAD = BK * BN / (THREAD_NUM * 4);
+
 
     // 移动 A/B/C 指针到指定的 tile 处
     A = A + by * BM * K;
@@ -47,58 +50,48 @@ __global__ void my_sgemm_v6(int M, int N, int K, float alpha, float *A, float *B
     float res_reg[TM][TN] = {0.f}; // 一个线程处理 TM * TN 个计算结果
     float A_reg[2][TM];
     float B_reg[2][TN];
+    float4 A_global_reg[A_LOADS_PER_THREAD];
+    float4 B_global_reg[B_LOADS_PER_THREAD];
 
-    cuda::pipeline<cuda::thread_scope_thread> pipeline = cuda::make_pipeline();
     int smem_write = 0;
 
-    // 第一次异步加载 Global Memory 到 Shared Memory.
-    pipeline.producer_acquire();
-    for(int s=0; s<BM; s+=thread_a_stride){
+    // 第一次加载 Global Memory 到 Shared Memory.
 #pragma unroll
-        for(int offset=0; offset<4; ++offset){
-            cuda::memcpy_async(
-                &As[smem_write][thread_a_col * 4 + offset][thread_a_row + s],
-                &A[(thread_a_row + s) * K + thread_a_col * 4 + offset],
-                cuda::aligned_size_t<4>(sizeof(float)), pipeline);
-        }
+    for(int load_idx=0; load_idx<A_LOADS_PER_THREAD; ++load_idx){
+        const int s = load_idx * thread_a_stride;
+        float4 tmp = FLOAT4(A[(thread_a_row + s) * K + thread_a_col * 4]);
+        As[smem_write][thread_a_col * 4][thread_a_row + s] = tmp.x;
+        As[smem_write][thread_a_col * 4 + 1][thread_a_row + s] = tmp.y;
+        As[smem_write][thread_a_col * 4 + 2][thread_a_row + s] = tmp.z;
+        As[smem_write][thread_a_col * 4 + 3][thread_a_row + s] = tmp.w;
     }
-    for(int s=0; s<BK; s+=thread_b_stride){
-        cuda::memcpy_async(
-            &Bs[smem_write][thread_b_row + s][thread_b_col * 4],
-            &B[(thread_b_row + s) * N + thread_b_col * 4],
-            cuda::aligned_size_t<16>(sizeof(float4)), pipeline);
+#pragma unroll
+    for(int load_idx=0; load_idx<B_LOADS_PER_THREAD; ++load_idx){
+        const int s = load_idx * thread_b_stride;
+        FLOAT4(Bs[smem_write][thread_b_row + s][thread_b_col * 4]) =
+            FLOAT4(B[(thread_b_row + s) * N + thread_b_col * 4]);
     }
-    pipeline.producer_commit();
-    cuda::pipeline_consumer_wait_prior<0>(pipeline);
     __syncthreads();
-    pipeline.consumer_release();
 
     // 移动 A/B 指针到指定的 block 处
     A += BK;
     B += BK * N;
-    
+
 
     // block 循环
     for(int i=BK ; i<K; i+=BK){
         smem_write ^= 1;
-        // 提交 next tile 的异步拷贝, 随后计算 current tile.
-        pipeline.producer_acquire();
-        for(int s=0; s<BM; s+=thread_a_stride){
+        // 将 next tile 预取到寄存器, 随后计算 current tile.
 #pragma unroll
-            for(int offset=0; offset<4; ++offset){
-                cuda::memcpy_async(
-                    &As[smem_write][thread_a_col * 4 + offset][thread_a_row + s],
-                    &A[(thread_a_row + s) * K + thread_a_col * 4 + offset],
-                    cuda::aligned_size_t<4>(sizeof(float)), pipeline);
-            }
+        for(int load_idx=0; load_idx<A_LOADS_PER_THREAD; ++load_idx){
+            const int s = load_idx * thread_a_stride;
+            A_global_reg[load_idx] = FLOAT4(A[(thread_a_row + s) * K + thread_a_col * 4]);
         }
-        for(int s=0; s<BK; s+=thread_b_stride){
-            cuda::memcpy_async(
-                &Bs[smem_write][thread_b_row + s][thread_b_col * 4],
-                &B[(thread_b_row + s) * N + thread_b_col * 4],
-                cuda::aligned_size_t<16>(sizeof(float4)), pipeline);
+#pragma unroll
+        for(int load_idx=0; load_idx<B_LOADS_PER_THREAD; ++load_idx){
+            const int s = load_idx * thread_b_stride;
+            B_global_reg[load_idx] = FLOAT4(B[(thread_b_row + s) * N + thread_b_col * 4]);
         }
-        pipeline.producer_commit();
 
         A += BK;
         B += BK * N;
@@ -143,12 +136,26 @@ __global__ void my_sgemm_v6(int M, int N, int K, float alpha, float *A, float *B
             }
         }
 
-        cuda::pipeline_consumer_wait_prior<0>(pipeline);
+        // 计算完成后才消费预取寄存器, 将 next tile 写入另一个 Shared buffer.
+#pragma unroll
+        for(int load_idx=0; load_idx<A_LOADS_PER_THREAD; ++load_idx){
+            const int s = load_idx * thread_a_stride;
+            const float4 tmp = A_global_reg[load_idx];
+            As[smem_write][thread_a_col * 4][thread_a_row + s] = tmp.x;
+            As[smem_write][thread_a_col * 4 + 1][thread_a_row + s] = tmp.y;
+            As[smem_write][thread_a_col * 4 + 2][thread_a_row + s] = tmp.z;
+            As[smem_write][thread_a_col * 4 + 3][thread_a_row + s] = tmp.w;
+        }
+#pragma unroll
+        for(int load_idx=0; load_idx<B_LOADS_PER_THREAD; ++load_idx){
+            const int s = load_idx * thread_b_stride;
+            FLOAT4(Bs[smem_write][thread_b_row + s][thread_b_col * 4]) = B_global_reg[load_idx];
+        }
+
         __syncthreads();
-        pipeline.consumer_release();
         /* ping pong smem2reg end*/
     }
-    
+
     // 计算最后一个 tile
     /* ping pong smem2reg start */
 
@@ -190,7 +197,7 @@ __global__ void my_sgemm_v6(int M, int N, int K, float alpha, float *A, float *B
         }
     }
     /* ping pong smem2reg end*/
-    
+
     // 将结果写入 C 矩阵中
 #pragma unroll
     for (int resIdxM=0; resIdxM<TM; ++resIdxM){
